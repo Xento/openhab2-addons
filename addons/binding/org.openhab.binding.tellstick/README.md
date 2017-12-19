@@ -18,11 +18,14 @@ This binding supports the following thing types:
 
 * *Dimmable Device* - Usually for controlling lamps.  `dimmer`
 * *Switchable Device* - On/Off only could be lamps or other electronic equipment. `switch`
-* *Sensors* - Often temperature-, barometic- and humidity-sensors. `sensor`
+* *Sensors* - Temperature- and humidity-sensors. `sensor`
 
 Additionally the binding have two types of bridge things which correspond to available API types:
+
 * *Telldus Core Bridge* - Oldest API, used by USB devices. `telldus-core`
 * *Telldus Live Bridge* - Telldus Cloud service, all devices with online access. `telldus-live`
+
+The attentive reader discovers that there is many missing sensor types; `UV`, `Luminance`, `Dew point`, `Barometic pressure` `Rainrate`, `Raintotal`, `Winddirection`, `Windaverage` and `Windgust` which is supported by the Tellstick devices. Support have not been implemented on the openhab side yet, contributions are welcome.  
 
 ***Switchbased sensors workaround*** <br>
 *Some 433MHz magnetic & PIR sensors for example magnetic door sensors are detected as a regular `switch` things instead of a separate type. There is technically no way of distinguish them apart from regulur `switch` things. For using them as sensors only (not paired to a lamp) please consult the workaround in the channel section.*
@@ -33,6 +36,7 @@ Devices which is added to *Telldus Core* and *Telldus Live* can be discovered by
 
 When you add this binding it will try to discover the *Telldus Core Bridge*. If it's installed correct its devices will show up.
 If you want to use the *Telldus Live* its bridge, *Telldus Live bridge* need to be added manually.
+
 ## Binding Configuration
 
 ***For USB connected tellsticks only, eg. Basic and DUO*** <br>
@@ -71,13 +75,13 @@ Depending on your Tellstick model different API methods is available:
 #### Telldus Core Bridge
 
 ```
-Bridge tellstick:telldus-core:1 "Tellstick Duo" [resendInterval="200"]
+Bridge tellstick:telldus-core:1 "Tellstick Duo" [resendInterval=200]
 ```
 
 Optional:
 
 - **libraryPath:** The path to tellduscore.dll/so,
-- **resendInterval:** The interval between each transmission of command, default 100ms.
+- **resendInterval:** The interval between each transmission of command in ms, default 100ms.
 
 #### Telldus Live Bridge
 
@@ -97,20 +101,22 @@ Required:
 
 Optional:
 
-- **refreshInterval:** How often we should contact *Telldus Live* to check for updates
+- **refreshInterval:** How often we should contact *Telldus Live* to check for updates (in ms)
 
 ## Channels
 
+Actuators ([dimmer]/[switch]) support the following channels:
+
 <table>
-<tr><td colspan="3">Actuators ([dimmer]/[switch]) support the following channels:</td></tr>
 <tr><td><b>Channel Type ID</b></td> <td><b>Item Type</b></td> <td><b>Description</b></td> </tr>
 <tr><td>dimmer</td><td>Number</td><td>This channel indicates the current dim level</td></tr>
 <tr><td>state</td><td>Switch</td><td>This channel indicates whether a device is turned on or off.</td></tr>
 <tr><td>timestamp</td><td>DateTime</td><td>This channel reports the last time this device state changed.</td></tr>
 </table>
 
+Sensors ([sensor]) support the following channels:
+
 <table>
-<tr><td colspan="3">Sensors ([sensor]) support the following channels:</td></tr>
 <tr><td><b>Channel Type ID</b></td> <td><b>Item Type</b></td> <td><b>Description</b></td> </tr>
 <tr><td>humidity</td><td>Number</td><td>This channel reports the current humidity in percentage.</td></tr>
 <tr><td>temperature</td><td>Number</td><td>This channel reports the current temperature in celsius.</td></tr>
@@ -152,8 +158,8 @@ end
 ### tellstick.things
 
 ```
-Bridge tellstick:telldus-core:1 "Tellstick Duo" [resendInterval="200"]
-Bridge tellstick:telldus-live:2 "Tellstick ZWave" [refresh="10000", publicKey="XXXXXXXX", privateKey="YYYYYY", token= "ZZZZZZZZ", tokenSecret="UUUUUUUUUU"]
+Bridge tellstick:telldus-core:1 "Tellstick Duo" [resendInterval=200]
+Bridge tellstick:telldus-live:2 "Tellstick ZWave" [refreshInterval=10000, publicKey="XXXXXXXX", privateKey="YYYYYY", token= "ZZZZZZZZ", tokenSecret="UUUUUUUUUU"]
 ```
 
 Devices are preferable discovered automatically.
@@ -164,8 +170,8 @@ Add them either with karaf: `inbox approve <thingId>` or in paperUI. The bridges
 List available devices in karaf with `things` or get the channels in paperUI.
 
 ```
-Slider living_room_ceiling  "Living room ceiling"       <light>                 {channel="tellstick:dimmer:1:3:state"}
-Switch living_room_table    "Living room table"         <light>                 {channel="tellstick:switch:1:3:state"}
-Number inside_temperature   "Inside temperature [%.1f °C]" <temperature> {channel="tellstick:sensor:1:47_temperaturehumidity_fineoffset:temperature"}
-Number inside_humidity      "Inside humidity [%.1f RH]" <humidity>	{channel="tellstick:sensor:1:47_temperaturehumidity_fineoffset:humidity"}
+Slider living_room_ceiling  "Living room ceiling"              <light>                 {channel="tellstick:dimmer:1:3:state"}
+Switch living_room_table    "Living room table"                <light>                 {channel="tellstick:switch:1:3:state"}
+Number inside_temperature   "Inside temperature [%.1f °C]"     <temperature>           {channel="tellstick:sensor:1:47_temperaturehumidity_fineoffset:temperature"}
+Number inside_humidity      "Inside humidity [%.1f RH]"        <humidity>              {channel="tellstick:sensor:1:47_temperaturehumidity_fineoffset:humidity"}
 ```

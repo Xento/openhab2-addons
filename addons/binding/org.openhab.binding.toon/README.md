@@ -1,13 +1,7 @@
----
-layout: documentation
----
-
-{% include base.html %}
-
 # Toon Binding
+
 The Toon bindings shows among others current room temperature, setpoint, energy and gas usage information.
 It can control the setpoint and current program. Connected smart plugs can also be controlled.
-
 
 ## Supported Things
 
@@ -81,7 +75,6 @@ demo.sitemaps
         Setpoint item=ToonSetpoint minValue=16 maxValue=28 step=0.5
         Selection item=ToonSetpointMode label="Toon Program Selection" mappings=[0=Comfort, 1=Active, 2=Sleep, 3=Away]
     }
-
 ```
 
 
