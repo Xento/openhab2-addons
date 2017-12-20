@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2014-2016 by the respective copyright holders.
+ * Copyright (c) 2010-2017 by the respective copyright holders.
  *
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
@@ -8,16 +8,15 @@
  */
 package org.openhab.binding.rfxcom.internal.messages;
 
-import java.util.Arrays;
-import java.util.List;
+import static org.openhab.binding.rfxcom.RFXComBindingConstants.*;
+import static org.openhab.binding.rfxcom.internal.messages.ByteEnumUtil.fromByte;
 
-import org.eclipse.smarthome.core.library.items.NumberItem;
 import org.eclipse.smarthome.core.library.types.DecimalType;
 import org.eclipse.smarthome.core.types.State;
 import org.eclipse.smarthome.core.types.Type;
-import org.eclipse.smarthome.core.types.UnDefType;
-import org.openhab.binding.rfxcom.RFXComValueSelector;
 import org.openhab.binding.rfxcom.internal.exceptions.RFXComException;
+import org.openhab.binding.rfxcom.internal.exceptions.RFXComUnsupportedChannelException;
+import org.openhab.binding.rfxcom.internal.exceptions.RFXComUnsupportedValueException;
 
 /**
  * RFXCOM data class for temperature and humidity message.
@@ -25,18 +24,16 @@ import org.openhab.binding.rfxcom.internal.exceptions.RFXComException;
  * @author Marc SAUVEUR - Initial contribution
  * @author Pauli Anttila
  */
-public class RFXComRainMessage extends RFXComBaseMessage {
+public class RFXComRainMessage extends RFXComBatteryDeviceMessage<RFXComRainMessage.SubType> {
 
-    public enum SubType {
-        UNDEF(0),
+    public enum SubType implements ByteEnumWrapper {
         RAIN1(1),
         RAIN2(2),
         RAIN3(3),
         RAIN4(4),
         RAIN5(5),
         RAIN6(6),
-
-        UNKNOWN(255);
+        RAIN7(7);
 
         private final int subType;
 
@@ -44,33 +41,22 @@ public class RFXComRainMessage extends RFXComBaseMessage {
             this.subType = subType;
         }
 
-        SubType(byte subType) {
-            this.subType = subType;
-        }
-
+        @Override
         public byte toByte() {
             return (byte) subType;
         }
     }
 
-    private final static List<RFXComValueSelector> supportedInputValueSelectors = Arrays.asList(
-            RFXComValueSelector.SIGNAL_LEVEL, RFXComValueSelector.BATTERY_LEVEL, RFXComValueSelector.RAIN_RATE,
-            RFXComValueSelector.RAIN_TOTAL);
-
-    private final static List<RFXComValueSelector> supportedOutputValueSelectors = Arrays.asList();
-
-    public SubType subType = SubType.UNDEF;
-    public int sensorId = 0;
-    public double rainRate = 0;
-    public double rainTotal = 0;
-    public byte signalLevel = 0;
-    public byte batteryLevel = 0;
+    public SubType subType;
+    public int sensorId;
+    public double rainRate;
+    public double rainTotal;
 
     public RFXComRainMessage() {
-        packetType = PacketType.RAIN;
+        super(PacketType.RAIN);
     }
 
-    public RFXComRainMessage(byte[] data) {
+    public RFXComRainMessage(byte[] data) throws RFXComException {
         encodeMessage(data);
     }
 
@@ -90,15 +76,10 @@ public class RFXComRainMessage extends RFXComBaseMessage {
     }
 
     @Override
-    public void encodeMessage(byte[] data) {
-
+    public void encodeMessage(byte[] data) throws RFXComException {
         super.encodeMessage(data);
 
-        try {
-            subType = SubType.values()[super.subType];
-        } catch (Exception e) {
-            subType = SubType.UNKNOWN;
-        }
+        subType = fromByte(SubType.class, super.subType);
         sensorId = (data[4] & 0xFF) << 8 | (data[5] & 0xFF);
 
         rainRate = (short) ((data[6] & 0xFF) << 8 | (data[7] & 0xFF));
@@ -118,7 +99,7 @@ public class RFXComRainMessage extends RFXComBaseMessage {
 
     @Override
     public byte[] decodeMessage() {
-        byte[] data = new byte[10];
+        byte[] data = new byte[12];
 
         data[0] = 0x0B;
         data[1] = RFXComBaseMessage.PacketType.RAIN.toByte();
@@ -132,7 +113,7 @@ public class RFXComRainMessage extends RFXComBaseMessage {
         data[7] = (byte) (rainR & 0xFF);
 
         short rainT = (short) Math.abs(rainTotal * 10);
-        data[8] = (byte) ((rainT >> 8) & 0xFF);
+        data[8] = (byte) ((rainT >> 16) & 0xFF);
         data[9] = (byte) ((rainT >> 8) & 0xFF);
         data[10] = (byte) (rainT & 0xFF);
 
@@ -147,81 +128,37 @@ public class RFXComRainMessage extends RFXComBaseMessage {
     }
 
     @Override
-    public State convertToState(RFXComValueSelector valueSelector) throws RFXComException {
+    public State convertToState(String channelId) throws RFXComUnsupportedChannelException {
 
-        State state = UnDefType.UNDEF;
+        switch (channelId) {
+            case CHANNEL_RAIN_RATE:
+                return new DecimalType(rainRate);
 
-        if (valueSelector.getItemClass() == NumberItem.class) {
+            case CHANNEL_RAIN_TOTAL:
+                return new DecimalType(rainTotal);
 
-            if (valueSelector == RFXComValueSelector.SIGNAL_LEVEL) {
-
-                state = new DecimalType(signalLevel);
-
-            } else if (valueSelector == RFXComValueSelector.BATTERY_LEVEL) {
-
-                state = new DecimalType(batteryLevel);
-
-            } else if (valueSelector == RFXComValueSelector.RAIN_RATE) {
-
-                state = new DecimalType(rainRate);
-            } else if (valueSelector == RFXComValueSelector.RAIN_TOTAL) {
-
-                state = new DecimalType(rainTotal);
-
-            } else {
-                throw new RFXComException("Can't convert " + valueSelector + " to NumberItem");
-            }
-
-        } else {
-
-            throw new RFXComException("Can't convert " + valueSelector + " to " + valueSelector.getItemClass());
-
+            default:
+                return super.convertToState(channelId);
         }
-
-        return state;
     }
 
     @Override
-    public void setSubType(Object subType) throws RFXComException {
-        throw new RFXComException("Not supported");
+    public void setSubType(SubType subType) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setDeviceId(String deviceId) throws RFXComException {
-        throw new RFXComException("Not supported");
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public void convertFromState(RFXComValueSelector valueSelector, Type type) throws RFXComException {
-
-        throw new RFXComException("Not supported");
+    public void convertFromState(String channelId, Type type) throws RFXComUnsupportedChannelException {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public Object convertSubType(String subType) throws RFXComException {
-
-        for (SubType s : SubType.values()) {
-            if (s.toString().equals(subType)) {
-                return s;
-            }
-        }
-
-        // try to find sub type by number
-        try {
-            return SubType.values()[Integer.parseInt(subType)];
-        } catch (Exception e) {
-            throw new RFXComException("Unknown sub type " + subType);
-        }
+    public SubType convertSubType(String subType) throws RFXComUnsupportedValueException {
+        return ByteEnumUtil.convertSubType(SubType.class, subType);
     }
-
-    @Override
-    public List<RFXComValueSelector> getSupportedInputValueSelectors() throws RFXComException {
-        return supportedInputValueSelectors;
-    }
-
-    @Override
-    public List<RFXComValueSelector> getSupportedOutputValueSelectors() throws RFXComException {
-        return supportedOutputValueSelectors;
-    }
-
 }

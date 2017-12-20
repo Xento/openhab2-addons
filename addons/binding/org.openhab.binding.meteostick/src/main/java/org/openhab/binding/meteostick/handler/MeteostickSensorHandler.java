@@ -1,5 +1,6 @@
 /**
- * Copyright (c) 2014 openHAB UG (haftungsbeschraenkt) and others.
+ * Copyright (c) 2010-2017 by the respective copyright holders.
+ *
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -22,7 +23,6 @@ import java.util.concurrent.TimeUnit;
 
 import org.eclipse.smarthome.core.library.types.DecimalType;
 import org.eclipse.smarthome.core.library.types.OnOffType;
-import org.eclipse.smarthome.core.thing.Bridge;
 import org.eclipse.smarthome.core.thing.ChannelUID;
 import org.eclipse.smarthome.core.thing.Thing;
 import org.eclipse.smarthome.core.thing.ThingStatus;
@@ -30,7 +30,6 @@ import org.eclipse.smarthome.core.thing.ThingStatusDetail;
 import org.eclipse.smarthome.core.thing.ThingStatusInfo;
 import org.eclipse.smarthome.core.thing.ThingTypeUID;
 import org.eclipse.smarthome.core.thing.binding.BaseThingHandler;
-import org.eclipse.smarthome.core.thing.binding.ThingHandler;
 import org.eclipse.smarthome.core.types.Command;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,7 +41,7 @@ import org.slf4j.LoggerFactory;
  * @author Chris Jackson - Initial contribution
  */
 public class MeteostickSensorHandler extends BaseThingHandler implements MeteostickEventListener {
-    public final static Set<ThingTypeUID> SUPPORTED_THING_TYPES = Collections.singleton(THING_TYPE_DAVIS);
+    public static final Set<ThingTypeUID> SUPPORTED_THING_TYPES = Collections.singleton(THING_TYPE_DAVIS);
 
     private Logger logger = LoggerFactory.getLogger(MeteostickSensorHandler.class);
 
@@ -61,7 +60,6 @@ public class MeteostickSensorHandler extends BaseThingHandler implements Meteost
     @Override
     public void initialize() {
         logger.debug("Initializing MeteoStick handler.");
-        super.initialize();
 
         channel = ((BigDecimal) getConfig().get(PARAMETER_CHANNEL)).intValue();
         logger.debug("Initializing MeteoStick handler - Channel {}.", channel);
@@ -77,9 +75,9 @@ public class MeteostickSensorHandler extends BaseThingHandler implements Meteost
 
         // Scheduling a job on each hour to update the last hour rainfall
         long start = 3600 - ((System.currentTimeMillis() % 3600000) / 1000);
-        rainHourlyJob = scheduler.scheduleAtFixedRate(pollingRunnable, start, 3600, TimeUnit.SECONDS);
+        rainHourlyJob = scheduler.scheduleWithFixedDelay(pollingRunnable, start, 3600, TimeUnit.SECONDS);
 
-        updateStatus(ThingStatus.OFFLINE);
+        updateStatus(ThingStatus.UNKNOWN);
     }
 
     @Override
@@ -99,12 +97,6 @@ public class MeteostickSensorHandler extends BaseThingHandler implements Meteost
 
     @Override
     public void handleCommand(ChannelUID channelUID, Command command) {
-    }
-
-    @Override
-    public void bridgeHandlerInitialized(ThingHandler thingHandler, Bridge bridge) {
-        logger.debug("MeteoStick handler {}: bridgeHandlerInitialized", channel);
-        bridgeStatusChanged(bridge.getStatusInfo());
     }
 
     @Override

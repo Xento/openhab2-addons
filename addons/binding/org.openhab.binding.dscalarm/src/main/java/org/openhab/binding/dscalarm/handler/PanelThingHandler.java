@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2014-2016 by the respective copyright holders.
+ * Copyright (c) 2010-2017 by the respective copyright holders.
  *
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
@@ -23,6 +23,7 @@ import org.eclipse.smarthome.core.library.types.StringType;
 import org.eclipse.smarthome.core.thing.ChannelUID;
 import org.eclipse.smarthome.core.thing.Thing;
 import org.eclipse.smarthome.core.types.Command;
+import org.eclipse.smarthome.core.types.RefreshType;
 import org.openhab.binding.dscalarm.internal.DSCAlarmCode;
 import org.openhab.binding.dscalarm.internal.DSCAlarmEvent;
 import org.openhab.binding.dscalarm.internal.DSCAlarmMessage;
@@ -49,9 +50,13 @@ public class PanelThingHandler extends DSCAlarmBaseThingHandler {
         setDSCAlarmThingType(DSCAlarmThingType.PANEL);
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    private static final int PANEL_COMMAND_POLL = 0;
+    private static final int PANEL_COMMAND_STATUS_REPORT = 1;
+    private static final int PANEL_COMMAND_LABELS_REQUEST = 2;
+    private static final int PANEL_COMMAND_DUMP_ZONE_TIMERS = 8;
+    private static final int PANEL_COMMAND_SET_TIME_DATE = 10;
+    private static final int PANEL_COMMAND_CODE_SEND = 200;
+
     @Override
     public void updateChannel(ChannelUID channelUID, int state, String description) {
         logger.debug("updateChannel(): Panel Channel UID: {}", channelUID);
@@ -76,7 +81,8 @@ public class PanelThingHandler extends DSCAlarmBaseThingHandler {
                     try {
                         date = sdfReceived.parse(description);
                     } catch (ParseException e) {
-                        logger.error("updateChannel(): Parse Exception occured while trying to parse date string: {}. ", e.getMessage());
+                        logger.warn("updateChannel(): Parse Exception occurred while trying to parse date string: {}. ",
+                                e.getMessage());
                     }
 
                     if (date != null) {
@@ -87,12 +93,12 @@ public class PanelThingHandler extends DSCAlarmBaseThingHandler {
 
                     break;
                 case PANEL_TIME_STAMP:
-                    boolState = state != 0 ? true : false;
+                    boolState = state != 0;
                     onOffType = boolState ? OnOffType.ON : OnOffType.OFF;
                     updateState(channelUID, onOffType);
                     break;
                 case PANEL_TIME_BROADCAST:
-                    boolState = state != 0 ? true : false;
+                    boolState = state != 0;
                     onOffType = boolState ? OnOffType.ON : OnOffType.OFF;
                     updateState(channelUID, onOffType);
                     break;
@@ -103,67 +109,67 @@ public class PanelThingHandler extends DSCAlarmBaseThingHandler {
                     updateState(channelUID, new StringType(description));
                     break;
                 case PANEL_TROUBLE_LED:
-                    boolState = state != 0 ? true : false;
+                    boolState = state != 0;
                     onOffType = boolState ? OnOffType.ON : OnOffType.OFF;
                     updateState(channelUID, onOffType);
                     break;
                 case PANEL_SERVICE_REQUIRED:
-                    trouble = state != 0 ? true : false;
+                    trouble = state != 0;
                     onOffType = trouble ? OnOffType.ON : OnOffType.OFF;
                     updateState(channelUID, onOffType);
                     break;
                 case PANEL_AC_TROUBLE:
-                    trouble = state != 0 ? true : false;
+                    trouble = state != 0;
                     onOffType = trouble ? OnOffType.ON : OnOffType.OFF;
                     updateState(channelUID, onOffType);
                     break;
                 case PANEL_TELEPHONE_TROUBLE:
-                    trouble = state != 0 ? true : false;
+                    trouble = state != 0;
                     onOffType = trouble ? OnOffType.ON : OnOffType.OFF;
                     updateState(channelUID, onOffType);
                     break;
                 case PANEL_FTC_TROUBLE:
-                    trouble = state != 0 ? true : false;
+                    trouble = state != 0;
                     onOffType = trouble ? OnOffType.ON : OnOffType.OFF;
                     updateState(channelUID, onOffType);
                     break;
                 case PANEL_ZONE_FAULT:
-                    trouble = state != 0 ? true : false;
+                    trouble = state != 0;
                     onOffType = trouble ? OnOffType.ON : OnOffType.OFF;
                     updateState(channelUID, onOffType);
                     break;
                 case PANEL_ZONE_TAMPER:
-                    trouble = state != 0 ? true : false;
+                    trouble = state != 0;
                     onOffType = trouble ? OnOffType.ON : OnOffType.OFF;
                     updateState(channelUID, onOffType);
                     break;
                 case PANEL_ZONE_LOW_BATTERY:
-                    trouble = state != 0 ? true : false;
+                    trouble = state != 0;
                     onOffType = trouble ? OnOffType.ON : OnOffType.OFF;
                     updateState(channelUID, onOffType);
                     break;
                 case PANEL_TIME_LOSS:
-                    trouble = state != 0 ? true : false;
+                    trouble = state != 0;
                     onOffType = trouble ? OnOffType.ON : OnOffType.OFF;
                     updateState(channelUID, onOffType);
                     break;
                 case PANEL_FIRE_KEY_ALARM:
-                    trigger = state != 0 ? true : false;
+                    trigger = state != 0;
                     onOffType = trigger ? OnOffType.ON : OnOffType.OFF;
                     updateState(channelUID, onOffType);
                     break;
                 case PANEL_PANIC_KEY_ALARM:
-                    trigger = state != 0 ? true : false;
+                    trigger = state != 0;
                     onOffType = trigger ? OnOffType.ON : OnOffType.OFF;
                     updateState(channelUID, onOffType);
                     break;
                 case PANEL_AUX_KEY_ALARM:
-                    trigger = state != 0 ? true : false;
+                    trigger = state != 0;
                     onOffType = trigger ? OnOffType.ON : OnOffType.OFF;
                     updateState(channelUID, onOffType);
                     break;
                 case PANEL_AUX_INPUT_ALARM:
-                    trigger = state != 0 ? true : false;
+                    trigger = state != 0;
                     onOffType = trigger ? OnOffType.ON : OnOffType.OFF;
                     updateState(channelUID, onOffType);
                     break;
@@ -174,49 +180,24 @@ public class PanelThingHandler extends DSCAlarmBaseThingHandler {
         }
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public void handleCommand(ChannelUID channelUID, Command command) {
-        if (dscAlarmBridgeHandler == null) {
-            logger.warn("DSC Alarm bridge handler not available. Cannot handle command without bridge.");
+
+        logger.debug("handleCommand(): Command Received - {} {}.", channelUID, command);
+
+        if (command instanceof RefreshType) {
             return;
         }
 
-        int cmd;
+        if (dscAlarmBridgeHandler != null && dscAlarmBridgeHandler.isConnected()) {
 
-        boolean connected = dscAlarmBridgeHandler.isConnected();
+            int cmd;
 
-        if (connected) {
             switch (channelUID.getId()) {
                 case PANEL_COMMAND:
                     cmd = Integer.parseInt(command.toString());
-                    switch (cmd) {
-                        case 0:
-                            dscAlarmBridgeHandler.sendCommand(DSCAlarmCode.Poll);
-                            break;
-                        case 1:
-                            dscAlarmBridgeHandler.sendCommand(DSCAlarmCode.StatusReport);
-                            break;
-                        case 2:
-                            dscAlarmBridgeHandler.sendCommand(DSCAlarmCode.LabelsRequest);
-                            break;
-                        case 8:
-                            dscAlarmBridgeHandler.sendCommand(DSCAlarmCode.DumpZoneTimers);
-                            break;
-                        case 10:
-                            dscAlarmBridgeHandler.sendCommand(DSCAlarmCode.SetTimeDate);
-                            break;
-                        case 200:
-                            dscAlarmBridgeHandler.sendCommand(DSCAlarmCode.CodeSend, getUserCode());
-                            break;
-                        default:
-                            break;
-                    }
-
+                    handlePanelCommand(cmd);
                     updateState(channelUID, new StringType(String.valueOf(-1)));
-
                     break;
                 case PANEL_TIME_STAMP:
                     if (command instanceof OnOffType) {
@@ -239,13 +220,33 @@ public class PanelThingHandler extends DSCAlarmBaseThingHandler {
     }
 
     /**
-     * Method to set Channel PANEL_MESSAGE.
+     * Method to handle PANEL_COMMAND
      *
-     * @param message
+     * @param cmd
      */
-    private void setPanelMessage(String message) {
-        ChannelUID channelUID = new ChannelUID(getThing().getUID(), PANEL_MESSAGE);
-        updateChannel(channelUID, 0, message);
+    private void handlePanelCommand(int cmd) {
+        switch (cmd) {
+            case PANEL_COMMAND_POLL:
+                dscAlarmBridgeHandler.sendCommand(DSCAlarmCode.Poll);
+                break;
+            case PANEL_COMMAND_STATUS_REPORT:
+                dscAlarmBridgeHandler.sendCommand(DSCAlarmCode.StatusReport);
+                break;
+            case PANEL_COMMAND_LABELS_REQUEST:
+                dscAlarmBridgeHandler.sendCommand(DSCAlarmCode.LabelsRequest);
+                break;
+            case PANEL_COMMAND_DUMP_ZONE_TIMERS:
+                dscAlarmBridgeHandler.sendCommand(DSCAlarmCode.DumpZoneTimers);
+                break;
+            case PANEL_COMMAND_SET_TIME_DATE:
+                dscAlarmBridgeHandler.sendCommand(DSCAlarmCode.SetTimeDate);
+                break;
+            case PANEL_COMMAND_CODE_SEND:
+                dscAlarmBridgeHandler.sendCommand(DSCAlarmCode.CodeSend, getUserCode());
+                break;
+            default:
+                break;
+        }
     }
 
     /**
@@ -257,7 +258,7 @@ public class PanelThingHandler extends DSCAlarmBaseThingHandler {
         int state = 0;
         ChannelUID channelUID = new ChannelUID(getThing().getUID(), PANEL_TIME_STAMP);
 
-        boolean isTimeStamp = timeStamp != "" ? true : false;
+        boolean isTimeStamp = timeStamp != "";
 
         if ((timeStamp == "" && isTimeStamp == false) || (timeStamp != "" && isTimeStamp == true)) {
             logger.debug("setTimeStampState(): Already Set!", timeStamp);
@@ -382,7 +383,8 @@ public class PanelThingHandler extends DSCAlarmBaseThingHandler {
     private void verboseTroubleStatusHandler(EventObject event) {
         DSCAlarmEvent dscAlarmEvent = (DSCAlarmEvent) event;
         DSCAlarmMessage dscAlarmMessage = dscAlarmEvent.getDSCAlarmMessage();
-        String[] channelTypes = { PANEL_SERVICE_REQUIRED, PANEL_AC_TROUBLE, PANEL_TELEPHONE_TROUBLE, PANEL_FTC_TROUBLE, PANEL_ZONE_FAULT, PANEL_ZONE_TAMPER, PANEL_ZONE_LOW_BATTERY, PANEL_TIME_LOSS };
+        String[] channelTypes = { PANEL_SERVICE_REQUIRED, PANEL_AC_TROUBLE, PANEL_TELEPHONE_TROUBLE, PANEL_FTC_TROUBLE,
+                PANEL_ZONE_FAULT, PANEL_ZONE_TAMPER, PANEL_ZONE_LOW_BATTERY, PANEL_TIME_LOSS };
 
         String channel;
         ChannelUID channelUID = null;
@@ -403,9 +405,6 @@ public class PanelThingHandler extends DSCAlarmBaseThingHandler {
         }
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public void dscAlarmEventReceived(EventObject event, Thing thing) {
 
@@ -414,20 +413,17 @@ public class PanelThingHandler extends DSCAlarmBaseThingHandler {
             DSCAlarmMessage dscAlarmMessage = dscAlarmEvent.getDSCAlarmMessage();
             String dscAlarmMessageData = dscAlarmMessage.getMessageInfo(DSCAlarmMessageInfoType.DATA);
             setTimeStampState(dscAlarmMessage.getMessageInfo(DSCAlarmMessageInfoType.TIME_STAMP));
-            boolean suppressPanelMsg = false;
 
             if (getThing() == thing) {
                 ChannelUID channelUID = null;
-                DSCAlarmCode dscAlarmCode = DSCAlarmCode.getDSCAlarmCodeValue(dscAlarmMessage.getMessageInfo(DSCAlarmMessageInfoType.CODE));
+                DSCAlarmCode dscAlarmCode = DSCAlarmCode
+                        .getDSCAlarmCodeValue(dscAlarmMessage.getMessageInfo(DSCAlarmMessageInfoType.CODE));
                 logger.debug("dscAlarmEventRecieved(): Thing - {}   Command - {}", thing.getUID(), dscAlarmCode);
 
                 int state = 0;
 
                 switch (dscAlarmCode) {
                     case CommandAcknowledge: /* 500 */
-                        if (getSuppressAcknowledgementMsgs()) {
-                            suppressPanelMsg = true;
-                        }
                         break;
                     case SystemError: /* 502 */
                         int errorCode = Integer.parseInt(dscAlarmMessageData);
@@ -454,11 +450,6 @@ public class PanelThingHandler extends DSCAlarmBaseThingHandler {
 
                         channelUID = new ChannelUID(getThing().getUID(), PANEL_TIME_BROADCAST);
                         updateChannel(channelUID, 1, "");
-
-                        if (getSuppressAcknowledgementMsgs()) {
-                            suppressPanelMsg = true;
-                        }
-
                         break;
                     case FireKeyAlarm: /* 621 */
                         state = 1;
@@ -529,7 +520,8 @@ public class PanelThingHandler extends DSCAlarmBaseThingHandler {
                     case HomeAutomationTrouble: /* 831 */
                     case KeybusFault: /* 896 */
                         channelUID = new ChannelUID(getThing().getUID(), PANEL_TROUBLE_MESSAGE);
-                        updateChannel(channelUID, 0, dscAlarmMessage.getMessageInfo(DSCAlarmMessageInfoType.DESCRIPTION));
+                        updateChannel(channelUID, 0,
+                                dscAlarmMessage.getMessageInfo(DSCAlarmMessageInfoType.DESCRIPTION));
                         break;
                     case PanelBatteryTroubleRestore: /* 801 */
                     case PanelACRestore: /* 803 */
@@ -554,10 +546,6 @@ public class PanelThingHandler extends DSCAlarmBaseThingHandler {
                     default:
                         break;
                 }
-            }
-
-            if (!suppressPanelMsg) {
-                setPanelMessage(dscAlarmMessage.getMessageInfo(DSCAlarmMessageInfoType.DESCRIPTION));
             }
         }
     }

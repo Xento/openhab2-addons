@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2014-2016 by the respective copyright holders.
+ * Copyright (c) 2010-2017 by the respective copyright holders.
  *
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
@@ -18,7 +18,7 @@ import java.util.TooManyListenersException;
 import org.apache.commons.io.IOUtils;
 import org.eclipse.smarthome.core.thing.Bridge;
 import org.eclipse.smarthome.core.thing.ThingStatus;
-import org.openhab.binding.dscalarm.config.IT100BridgeConfiguration;
+import org.openhab.binding.dscalarm.internal.config.IT100BridgeConfiguration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -92,9 +92,6 @@ public class IT100BridgeHandler extends DSCAlarmBaseBridgeHandler implements Ser
         super.dispose();
     }
 
-    /**
-     * {@inheritDoc}
-     **/
     @Override
     public void openConnection() {
 
@@ -105,7 +102,8 @@ public class IT100BridgeHandler extends DSCAlarmBaseBridgeHandler implements Ser
             CommPort commPort = portIdentifier.open(this.getClass().getName(), 2000);
 
             serialPort = (SerialPort) commPort;
-            serialPort.setSerialPortParams(baudRate, SerialPort.DATABITS_8, SerialPort.STOPBITS_1, SerialPort.PARITY_NONE);
+            serialPort.setSerialPortParams(baudRate, SerialPort.DATABITS_8, SerialPort.STOPBITS_1,
+                    SerialPort.PARITY_NONE);
             serialPort.enableReceiveThreshold(1);
             serialPort.disableReceiveTimeout();
 
@@ -123,10 +121,12 @@ public class IT100BridgeHandler extends DSCAlarmBaseBridgeHandler implements Ser
             logger.error("openConnection(): Port in Use Exception: {}", portInUseException.getMessage());
             setConnected(false);
         } catch (UnsupportedCommOperationException unsupportedCommOperationException) {
-            logger.error("openConnection(): Unsupported Comm Operation Exception: {}", unsupportedCommOperationException.getMessage());
+            logger.error("openConnection(): Unsupported Comm Operation Exception: {}",
+                    unsupportedCommOperationException.getMessage());
             setConnected(false);
         } catch (UnsupportedEncodingException unsupportedEncodingException) {
-            logger.error("openConnection(): Unsupported Encoding Exception: {}", unsupportedEncodingException.getMessage());
+            logger.error("openConnection(): Unsupported Encoding Exception: {}",
+                    unsupportedEncodingException.getMessage());
             setConnected(false);
         } catch (IOException ioException) {
             logger.error("openConnection(): IO Exception: {}", ioException.getMessage());
@@ -134,9 +134,6 @@ public class IT100BridgeHandler extends DSCAlarmBaseBridgeHandler implements Ser
         }
     }
 
-    /**
-     * {@inheritDoc}
-     **/
     @Override
     public void write(String writeString) {
         try {
@@ -152,9 +149,6 @@ public class IT100BridgeHandler extends DSCAlarmBaseBridgeHandler implements Ser
         }
     }
 
-    /**
-     * {@inheritDoc}
-     **/
     @Override
     public String read() {
         String message = "";
@@ -184,9 +178,6 @@ public class IT100BridgeHandler extends DSCAlarmBaseBridgeHandler implements Ser
         return serialInput.readLine();
     }
 
-    /**
-     * {@inheritDoc}
-     **/
     @Override
     public void closeConnection() {
         logger.debug("closeConnection(): Closing Serial Connection!");
@@ -252,7 +243,8 @@ public class IT100BridgeHandler extends DSCAlarmBaseBridgeHandler implements Ser
             serialPort.addEventListener(serialPortEventListenser);
             serialPort.notifyOnDataAvailable(true);
         } catch (TooManyListenersException tooManyListenersException) {
-            logger.error("setSerialEventHandler(): Too Many Listeners Exception: {}", tooManyListenersException.getMessage());
+            logger.error("setSerialEventHandler(): Too Many Listeners Exception: {}",
+                    tooManyListenersException.getMessage());
         }
     }
 }

@@ -1,5 +1,6 @@
 /**
- * Copyright (c) 2014-2015 openHAB UG (haftungsbeschraenkt) and others.
+ * Copyright (c) 2010-2017 by the respective copyright holders.
+ *
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -9,16 +10,19 @@ package org.openhab.binding.netatmo.handler;
 
 import static org.openhab.binding.netatmo.NetatmoBindingConstants.*;
 
-import java.util.Map;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.Optional;
 
-import org.eclipse.smarthome.core.library.types.DateTimeType;
-import org.eclipse.smarthome.core.library.types.DecimalType;
-import org.eclipse.smarthome.core.library.types.OnOffType;
+import org.eclipse.jdt.annotation.NonNull;
+import org.eclipse.jdt.annotation.Nullable;
 import org.eclipse.smarthome.core.thing.Thing;
+import org.eclipse.smarthome.core.thing.ThingStatus;
 import org.eclipse.smarthome.core.types.State;
-import org.openhab.binding.netatmo.config.NetatmoModuleConfiguration;
-
-import io.swagger.client.model.NAModule;
+import org.eclipse.smarthome.core.types.UnDefType;
+import org.openhab.binding.netatmo.internal.ChannelTypeUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * {@link NetatmoModuleHandler} is the handler for a given
@@ -27,63 +31,61 @@ import io.swagger.client.model.NAModule;
  * @author Gaël L'hopital - Initial contribution OH2 version
  *
  */
-public abstract class NetatmoModuleHandler extends AbstractNetatmoThingHandler {
-    private final int batteryMin;
-    private final int batteryLow;
-    private final int batteryMax;
-    private final NetatmoModuleConfiguration configuration;
-    protected NAModule module;
+public class NetatmoModuleHandler<MODULE> extends AbstractNetatmoThingHandler {
+    private Logger logger = LoggerFactory.getLogger(NetatmoModuleHandler.class);
+    @Nullable
+    protected MODULE module;
 
-    protected NetatmoModuleHandler(Thing thing) {
+    protected NetatmoModuleHandler(@NonNull Thing thing) {
         super(thing);
-        Map<String, String> properties = thing.getProperties();
-        this.batteryMax = Integer.parseInt(properties.get(PROPERTY_BATTERY_MAX));
-        this.batteryMin = Integer.parseInt(properties.get(PROPERTY_BATTERY_MIN));
-        this.batteryLow = Integer.parseInt(properties.get(PROPERTY_BATTERY_LOW));
-        this.configuration = this.getConfigAs(NetatmoModuleConfiguration.class);
-    }
-
-    public String getParentId() {
-        return configuration.getParentId();
-    }
-
-    public String getId() {
-        return configuration.getEquipmentId();
-    }
-
-    private int getBatteryPercent(int batteryVp) {
-        // With new battery, API may return a value superior to batteryMax !
-        int correctedVp = Math.min(batteryVp, batteryMax);
-        return (100 * (correctedVp - batteryMin) / (batteryMax - batteryMin));
-    }
-
-    private boolean isBatteryLow(int batteryVp) {
-        return (batteryVp < batteryLow);
     }
 
     @Override
-    protected State getNAThingProperty(String chanelId) {
-        switch (chanelId) {
-            case CHANNEL_BATTERY_LEVEL:
-                return new DecimalType(getBatteryPercent(module.getBatteryVp()));
-            case CHANNEL_LOW_BATTERY:
-                return isBatteryLow(module.getBatteryVp()) ? OnOffType.ON : OnOffType.OFF;
-            case CHANNEL_LAST_MESSAGE:
-                return new DateTimeType(timestampToCalendar(module.getLastMessage()));
-            case CHANNEL_RF_STATUS:
-                Integer rfStatus = module.getRfStatus();
-                return new DecimalType(getSignalStrength(rfStatus));
-            default:
-                return super.getNAThingProperty(chanelId);
+    public void initialize() {
+        super.initialize();
+        requestParentRefresh();
+    }
+
+    protected String getParentId() {
+        String parentId = (String) config.get(PARENT_ID);
+        return parentId.toLowerCase();
+    }
+
+    public boolean childOf(AbstractNetatmoThingHandler naThingHandler) {
+        return naThingHandler.matchesId(getParentId());
+    }
+
+    @Override
+    protected State getNAThingProperty(String channelId) {
+        try {
+            if (channelId.equalsIgnoreCase(CHANNEL_LAST_MESSAGE) && module != null) {
+                Method getLastMessage = module.getClass().getMethod("getLastMessage");
+                Integer lastMessage = (Integer) getLastMessage.invoke(module);
+                return ChannelTypeUtils.toDateTimeType(lastMessage);
+            }
+        } catch (NoSuchMethodException | SecurityException | IllegalAccessException | IllegalArgumentException
+                | InvocationTargetException e) {
+            logger.error("The module has no method to access {} property ", channelId.toString());
+            return UnDefType.NULL;
+        }
+
+        return super.getNAThingProperty(channelId);
+    }
+
+    @SuppressWarnings("unchecked")
+    protected void updateChannels(Object module) {
+        if (module != null) {
+            this.module = (MODULE) module;
+            updateStatus(ThingStatus.ONLINE);
+            radioHelper.ifPresent(helper -> helper.setModule(module));
+            batteryHelper.ifPresent(helper -> helper.setModule(module));
+            super.updateChannels();
         }
     }
 
-    @Override
-    protected void updateChannels() {
-        dashboard = module.getDashboardData();
-
-        super.updateChannels();
-
+    protected void requestParentRefresh() {
+        Optional<AbstractNetatmoThingHandler> parent = getBridgeHandler().findNAThing(getParentId());
+        parent.ifPresent(p -> p.updateChannels());
     }
 
 }

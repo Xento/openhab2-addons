@@ -1,5 +1,6 @@
 /**
- * Copyright (c) 2014-2015 openHAB UG (haftungsbeschraenkt) and others.
+ * Copyright (c) 2010-2017 by the respective copyright holders.
+ *
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -9,19 +10,31 @@ package org.openhab.binding.netatmo.handler;
 
 import static org.openhab.binding.netatmo.NetatmoBindingConstants.*;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.math.BigDecimal;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
-import org.eclipse.smarthome.core.library.types.DateTimeType;
+import org.eclipse.jdt.annotation.NonNull;
+import org.eclipse.jdt.annotation.Nullable;
 import org.eclipse.smarthome.core.library.types.DecimalType;
 import org.eclipse.smarthome.core.library.types.PointType;
-import org.eclipse.smarthome.core.thing.Bridge;
 import org.eclipse.smarthome.core.thing.Thing;
-import org.eclipse.smarthome.core.thing.binding.ThingHandler;
+import org.eclipse.smarthome.core.thing.ThingStatus;
+import org.eclipse.smarthome.core.thing.ThingStatusDetail;
 import org.eclipse.smarthome.core.types.State;
-import org.openhab.binding.netatmo.config.NetatmoDeviceConfiguration;
+import org.eclipse.smarthome.core.types.UnDefType;
+import org.openhab.binding.netatmo.internal.ChannelTypeUtils;
+import org.openhab.binding.netatmo.internal.RefreshStrategy;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import io.swagger.client.model.NADevice;
 import io.swagger.client.model.NAPlace;
+import io.swagger.client.model.NAUserAdministrative;
 
 /**
  * {@link NetatmoDeviceHandler} is the handler for a given
@@ -30,67 +43,150 @@ import io.swagger.client.model.NAPlace;
  * @author Gaël L'hopital - Initial contribution OH2 version
  *
  */
-public abstract class NetatmoDeviceHandler extends AbstractNetatmoThingHandler {
-    protected NADevice device;
-    private NetatmoDeviceConfiguration configuration;
+public abstract class NetatmoDeviceHandler<DEVICE> extends AbstractNetatmoThingHandler {
 
-    public NetatmoDeviceHandler(Thing thing) {
+    private Logger logger = LoggerFactory.getLogger(NetatmoDeviceHandler.class);
+    private ScheduledFuture<?> refreshJob;
+    private RefreshStrategy refreshStrategy;
+    @Nullable
+    protected DEVICE device;
+    protected NAUserAdministrative userAdministrative;
+    protected Map<String, Object> childs = new ConcurrentHashMap<>();
+
+    public NetatmoDeviceHandler(@NonNull Thing thing) {
         super(thing);
     }
 
     @Override
-    public void bridgeHandlerInitialized(ThingHandler thingHandler, Bridge bridge) {
-        super.bridgeHandlerInitialized(thingHandler, bridge);
-        this.configuration = this.getConfigAs(NetatmoDeviceConfiguration.class);
-
-        scheduler.scheduleAtFixedRate(new Runnable() {
-            @Override
-            public void run() {
-                updateChannels();
+    public void initialize() {
+        super.initialize();
+        if (getBridge() != null) {
+            logger.debug("Initializing {} with id '{}'", getClass(), getId());
+            if (getBridge().getStatus() == ThingStatus.ONLINE) {
+                defineRefreshInterval();
+                updateStatus(ThingStatus.ONLINE);
+                scheduleRefreshJob();
+            } else {
+                logger.debug("setting device '{}' offline (bridge or thing offline)", getId());
+                updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.OFFLINE.BRIDGE_OFFLINE);
             }
-        }, 1, configuration.refreshInterval, TimeUnit.MILLISECONDS);
+        } else {
+            logger.debug("setting device '{}' offline (bridge == null)", getId());
+            updateStatus(ThingStatus.OFFLINE);
+        }
     }
+
+    private void scheduleRefreshJob() {
+        logger.debug("Scheduling update channel thread in {} s", refreshStrategy.nextRunDelayInS());
+        refreshJob = scheduler.schedule(() -> {
+            updateChannels();
+            refreshJob.cancel(false);
+            refreshJob = null;
+            scheduleRefreshJob();
+        }, refreshStrategy.nextRunDelayInS(), TimeUnit.SECONDS);
+    }
+
+    @Override
+    public void dispose() {
+        logger.debug("Running dispose()");
+        if (refreshJob != null && !refreshJob.isCancelled()) {
+            refreshJob.cancel(true);
+            refreshJob = null;
+        }
+    }
+
+    protected abstract DEVICE updateReadings();
 
     @Override
     protected void updateChannels() {
-        dashboard = device.getDashboardData();
-        super.updateChannels();
+        if (refreshStrategy != null) {
+            logger.debug("Data aged of {} s", refreshStrategy.dataAge() / 1000);
+            if (refreshStrategy.isDataOutdated()) {
+                logger.debug("Trying to update channels on device {}", getId());
+                childs.clear();
 
-        updateConnectedModules();
+                DEVICE newDeviceReading = updateReadings();
+                if (newDeviceReading != null) {
+                    updateStatus(ThingStatus.ONLINE);
+                    logger.debug("Successfully updated device readings! Now updating channels");
+                    this.device = newDeviceReading;
+                    Integer dataTimeStamp = getDataTimestamp();
+                    if (dataTimeStamp != null) {
+                        refreshStrategy.setDataTimeStamp(dataTimeStamp);
+                    }
+                    radioHelper.ifPresent(helper -> helper.setModule(device));
+                }
+            } else {
+                logger.debug("Data still valid for device {}", getId());
+            }
+            super.updateChannels();
+            updateChildModules();
+        }
     }
 
     @Override
-    protected State getNAThingProperty(String chanelId) {
-        switch (chanelId) {
-            case CHANNEL_LAST_STATUS_STORE:
-                return new DateTimeType(timestampToCalendar(device.getLastStatusStore()));
-            case CHANNEL_LOCATION:
-                NAPlace place = device.getPlace();
-                return new PointType(new DecimalType(place.getLocation().get(1)),
-                        new DecimalType(place.getLocation().get(0)), new DecimalType(place.getAltitude()));
-            case CHANNEL_WIFI_STATUS:
-                Integer wifiStatus = device.getWifiStatus();
-                return new DecimalType(getSignalStrength(wifiStatus));
-            default:
-                return super.getNAThingProperty(chanelId);
-        }
-    }
-
-    protected String getId() {
-        return configuration.getEquipmentId();
-    }
-
-    private void updateConnectedModules() {
-        for (Thing handler : bridgeHandler.getThing().getThings()) {
-            ThingHandler thingHandler = handler.getHandler();
-            if (thingHandler instanceof NetatmoModuleHandler) {
-                NetatmoModuleHandler moduleHandler = (NetatmoModuleHandler) thingHandler;
-                String parentId = moduleHandler.getParentId();
-                if (parentId != null && parentId.equals(getId())) {
-                    moduleHandler.updateChannels();
-                }
+    protected State getNAThingProperty(String channelId) {
+        try {
+            switch (channelId) {
+                case CHANNEL_LAST_STATUS_STORE:
+                    if (device != null) {
+                        Method getLastStatusStore = device.getClass().getMethod("getLastStatusStore");
+                        Integer lastStatusStore = (Integer) getLastStatusStore.invoke(device);
+                        return ChannelTypeUtils.toDateTimeType(lastStatusStore);
+                    } else {
+                        return UnDefType.UNDEF;
+                    }
+                case CHANNEL_LOCATION:
+                    if (device != null) {
+                        Method getPlace = device.getClass().getMethod("getPlace");
+                        NAPlace place = (NAPlace) getPlace.invoke(device);
+                        PointType point = new PointType(new DecimalType(place.getLocation().get(1)),
+                                new DecimalType(place.getLocation().get(0)));
+                        if (place.getAltitude() != null) {
+                            point.setAltitude(new DecimalType(place.getAltitude()));
+                        }
+                        return point;
+                    } else {
+                        return UnDefType.UNDEF;
+                    }
+                case CHANNEL_UNIT:
+                    return new DecimalType(userAdministrative.getUnit());
             }
+        } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+            logger.error("The device has no method to access {} property ", channelId.toString());
+            return UnDefType.NULL;
         }
+
+        return super.getNAThingProperty(channelId);
     }
+
+    private void updateChildModules() {
+        logger.debug("Updating child modules of {}", getId());
+        childs.forEach((childId, moduleData) -> {
+            Optional<AbstractNetatmoThingHandler> childHandler = getBridgeHandler().findNAThing(childId);
+            childHandler.map(NetatmoModuleHandler.class::cast).ifPresent(naChildModule -> {
+                logger.debug("Updating child module {}", naChildModule.getId());
+                naChildModule.updateChannels(moduleData);
+            });
+        });
+    }
+
+    /*
+     * Sets the refresh rate of the device depending wether it's a property
+     * of the thing or if it's defined by configuration
+     */
+    private void defineRefreshInterval() {
+        BigDecimal dataValidityPeriod;
+        if (thing.getProperties().containsKey(PROPERTY_REFRESH_PERIOD)) {
+            String refreshPeriodProperty = thing.getProperties().get(PROPERTY_REFRESH_PERIOD);
+            dataValidityPeriod = new BigDecimal(refreshPeriodProperty);
+        } else {
+            Object interval = config.get(REFRESH_INTERVAL);
+            dataValidityPeriod = (BigDecimal) interval;
+        }
+        refreshStrategy = new RefreshStrategy(dataValidityPeriod.intValue());
+    }
+
+    protected abstract @Nullable Integer getDataTimestamp();
 
 }

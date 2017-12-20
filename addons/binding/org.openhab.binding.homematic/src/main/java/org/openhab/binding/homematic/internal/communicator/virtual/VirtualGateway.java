@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2014-2015 openHAB UG (haftungsbeschraenkt) and others.
+ * Copyright (c) 2010-2017 by the respective copyright holders.
  *
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
@@ -11,11 +11,12 @@ package org.openhab.binding.homematic.internal.communicator.virtual;
 import java.io.IOException;
 
 import org.openhab.binding.homematic.internal.communicator.HomematicGateway;
-import org.openhab.binding.homematic.internal.communicator.HomematicGatewayListener;
+import org.openhab.binding.homematic.internal.communicator.HomematicGatewayAdapter;
 import org.openhab.binding.homematic.internal.communicator.client.RpcClient;
 import org.openhab.binding.homematic.internal.misc.HomematicClientException;
 import org.openhab.binding.homematic.internal.model.HmDatapoint;
 import org.openhab.binding.homematic.internal.model.HmDatapointConfig;
+import org.openhab.binding.homematic.internal.model.HmInterface;
 
 /**
  * Extends the HomematicGateway with a method called from a virtual datapoint.
@@ -33,7 +34,7 @@ public interface VirtualGateway extends HomematicGateway {
     /**
      * Returns the rpc client.
      */
-    public RpcClient getRpcClient();
+    public RpcClient<?> getRpcClient(HmInterface hmInterface) throws IOException;
 
     /**
      * Disables a boolean datapoint by setting the value to false after a given delay.
@@ -43,5 +44,5 @@ public interface VirtualGateway extends HomematicGateway {
     /**
      * Returns the event listener.
      */
-    public HomematicGatewayListener getEventListener();
+    public HomematicGatewayAdapter getGatewayAdapter();
 }

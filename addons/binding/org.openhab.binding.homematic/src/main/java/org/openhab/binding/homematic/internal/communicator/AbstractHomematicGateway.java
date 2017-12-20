@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2014-2015 openHAB UG (haftungsbeschraenkt) and others.
+ * Copyright (c) 2010-2017 by the respective copyright holders.
  *
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
@@ -18,17 +18,20 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
-import org.apache.commons.lang.ObjectUtils;
 import org.apache.commons.lang.StringUtils;
 import org.eclipse.smarthome.core.common.ThreadPoolManager;
 import org.openhab.binding.homematic.internal.common.HomematicConfig;
 import org.openhab.binding.homematic.internal.communicator.client.BinRpcClient;
 import org.openhab.binding.homematic.internal.communicator.client.RpcClient;
+import org.openhab.binding.homematic.internal.communicator.client.TransferMode;
+import org.openhab.binding.homematic.internal.communicator.client.UnknownParameterSetException;
 import org.openhab.binding.homematic.internal.communicator.client.XmlRpcClient;
 import org.openhab.binding.homematic.internal.communicator.server.BinRpcServer;
 import org.openhab.binding.homematic.internal.communicator.server.RpcEventListener;
@@ -38,12 +41,19 @@ import org.openhab.binding.homematic.internal.communicator.virtual.BatteryTypeVi
 import org.openhab.binding.homematic.internal.communicator.virtual.DeleteDeviceModeVirtualDatapointHandler;
 import org.openhab.binding.homematic.internal.communicator.virtual.DeleteDeviceVirtualDatapointHandler;
 import org.openhab.binding.homematic.internal.communicator.virtual.DisplayOptionsVirtualDatapointHandler;
+import org.openhab.binding.homematic.internal.communicator.virtual.DisplayTextVirtualDatapoint;
 import org.openhab.binding.homematic.internal.communicator.virtual.FirmwareVirtualDatapointHandler;
+import org.openhab.binding.homematic.internal.communicator.virtual.HmwIoModuleVirtualDatapointHandler;
 import org.openhab.binding.homematic.internal.communicator.virtual.InstallModeDurationVirtualDatapoint;
 import org.openhab.binding.homematic.internal.communicator.virtual.InstallModeVirtualDatapoint;
 import org.openhab.binding.homematic.internal.communicator.virtual.OnTimeAutomaticVirtualDatapointHandler;
+import org.openhab.binding.homematic.internal.communicator.virtual.PressVirtualDatapointHandler;
 import org.openhab.binding.homematic.internal.communicator.virtual.ReloadAllFromGatewayVirtualDatapointHandler;
 import org.openhab.binding.homematic.internal.communicator.virtual.ReloadFromGatewayVirtualDatapointHandler;
+import org.openhab.binding.homematic.internal.communicator.virtual.ReloadRssiVirtualDatapointHandler;
+import org.openhab.binding.homematic.internal.communicator.virtual.RssiVirtualDatapointHandler;
+import org.openhab.binding.homematic.internal.communicator.virtual.SignalStrengthVirtualDatapointHandler;
+import org.openhab.binding.homematic.internal.communicator.virtual.StateContactVirtualDatapointHandler;
 import org.openhab.binding.homematic.internal.communicator.virtual.VirtualDatapointHandler;
 import org.openhab.binding.homematic.internal.communicator.virtual.VirtualGateway;
 import org.openhab.binding.homematic.internal.misc.DelayedExecuter;
@@ -55,8 +65,10 @@ import org.openhab.binding.homematic.internal.model.HmDatapoint;
 import org.openhab.binding.homematic.internal.model.HmDatapointConfig;
 import org.openhab.binding.homematic.internal.model.HmDatapointInfo;
 import org.openhab.binding.homematic.internal.model.HmDevice;
+import org.openhab.binding.homematic.internal.model.HmGatewayInfo;
 import org.openhab.binding.homematic.internal.model.HmInterface;
 import org.openhab.binding.homematic.internal.model.HmParamsetType;
+import org.openhab.binding.homematic.internal.model.HmRssiInfo;
 import org.openhab.binding.homematic.internal.model.HmValueType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -67,27 +79,27 @@ import org.slf4j.LoggerFactory;
  * @author Gerhard Riegler - Initial contribution
  */
 public abstract class AbstractHomematicGateway implements RpcEventListener, HomematicGateway, VirtualGateway {
-    private static final Logger logger = LoggerFactory.getLogger(HomematicGateway.class);
+    private final Logger logger = LoggerFactory.getLogger(AbstractHomematicGateway.class);
     public static final double DEFAULT_DISABLE_DELAY = 2.0;
     private static final long CONNECTION_TRACKER_INTERVAL_SECONDS = 15;
     private static final String GATEWAY_POOL_NAME = "homematicGateway";
 
-    protected RpcClient rpcClient;
-    protected HomematicConfig config;
+    private Map<TransferMode, RpcClient<?>> rpcClients = new HashMap<TransferMode, RpcClient<?>>();
+    private Map<TransferMode, RpcServer> rpcServers = new HashMap<TransferMode, RpcServer>();
 
+    protected HomematicConfig config;
     private String id;
-    private RpcServer rpcServer;
-    private HomematicGatewayListener eventListener;
-    private long lastEventTime = System.currentTimeMillis();
-    private DelayedExecuter delayedExecutor = new DelayedExecuter();
+    private HomematicGatewayAdapter gatewayAdapter;
+    private DelayedExecuter sendDelayedExecutor = new DelayedExecuter();
+    private DelayedExecuter receiveDelayedExecutor = new DelayedExecuter();
     private Set<HmDatapointInfo> echoEvents = Collections.synchronizedSet(new HashSet<HmDatapointInfo>());
-    private ScheduledFuture<?> eventTrackerThread;
-    private ScheduledFuture<?> connectionTrackerThread;
-    private ScheduledFuture<?> reconnectThread;
+    private ScheduledFuture<?> connectionTrackerFuture;
+    private ConnectionTrackerThread connectionTrackerThread;
     private Map<String, HmDevice> devices = Collections.synchronizedMap(new HashMap<String, HmDevice>());
-    private List<HmInterface> availableInterfaces = new ArrayList<HmInterface>(4);
+    private Map<HmInterface, TransferMode> availableInterfaces = new TreeMap<HmInterface, TransferMode>();
     private static List<VirtualDatapointHandler> virtualDatapointHandlers = new ArrayList<VirtualDatapointHandler>();
     private boolean cancelLoadAllMetadata;
+    private boolean initialized;
 
     static {
         // loads all virtual datapoints
@@ -101,176 +113,171 @@ public abstract class AbstractHomematicGateway implements RpcEventListener, Home
         virtualDatapointHandlers.add(new InstallModeDurationVirtualDatapoint());
         virtualDatapointHandlers.add(new DeleteDeviceModeVirtualDatapointHandler());
         virtualDatapointHandlers.add(new DeleteDeviceVirtualDatapointHandler());
+        virtualDatapointHandlers.add(new RssiVirtualDatapointHandler());
+        virtualDatapointHandlers.add(new ReloadRssiVirtualDatapointHandler());
+        virtualDatapointHandlers.add(new StateContactVirtualDatapointHandler());
+        virtualDatapointHandlers.add(new SignalStrengthVirtualDatapointHandler());
+        virtualDatapointHandlers.add(new DisplayTextVirtualDatapoint());
+        virtualDatapointHandlers.add(new HmwIoModuleVirtualDatapointHandler());
+        virtualDatapointHandlers.add(new PressVirtualDatapointHandler());
     }
 
-    public AbstractHomematicGateway(String id, HomematicConfig config, HomematicGatewayListener eventListener) {
+    public AbstractHomematicGateway(String id, HomematicConfig config, HomematicGatewayAdapter gatewayAdapter) {
         this.id = id;
         this.config = config;
-        this.eventListener = eventListener;
+        this.gatewayAdapter = gatewayAdapter;
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public void initialize() throws IOException {
         logger.debug("Initializing gateway with id '{}'", id);
 
-        // available interface lookup is done with XML-RPC, because HMIP does not support BIN-RPC
-        rpcClient = new XmlRpcClient(config);
-
-        availableInterfaces.add(HmInterface.RF);
-        if (config.getGatewayInfo().isCCU() || config.hasWiredPort()) {
-            if (hasInterface(HmInterface.WIRED)) {
-                availableInterfaces.add(HmInterface.WIRED);
+        HmGatewayInfo gatewayInfo = config.getGatewayInfo();
+        if (gatewayInfo.isHomegear()) {
+            // Homegear
+            availableInterfaces.put(HmInterface.RF, TransferMode.BIN_RPC);
+        } else if (gatewayInfo.isCCU()) {
+            // CCU
+            availableInterfaces.put(HmInterface.RF, TransferMode.BIN_RPC);
+            if (gatewayInfo.isWiredInterface()) {
+                availableInterfaces.put(HmInterface.WIRED, TransferMode.BIN_RPC);
+            }
+            if (gatewayInfo.isHmipInterface()) {
+                availableInterfaces.put(HmInterface.HMIP, TransferMode.XML_RPC);
+            }
+            if (gatewayInfo.isCuxdInterface()) {
+                availableInterfaces.put(HmInterface.CUXD, TransferMode.BIN_RPC);
+            }
+            if (gatewayInfo.isGroupInterface()) {
+                availableInterfaces.put(HmInterface.GROUP, TransferMode.XML_RPC);
+            }
+        } else {
+            // other
+            availableInterfaces.put(HmInterface.RF, TransferMode.XML_RPC);
+            if (gatewayInfo.isWiredInterface()) {
+                availableInterfaces.put(HmInterface.WIRED, TransferMode.XML_RPC);
+            }
+            if (gatewayInfo.isHmipInterface()) {
+                availableInterfaces.put(HmInterface.HMIP, TransferMode.XML_RPC);
             }
         }
-        if (config.getGatewayInfo().isCCU() || config.hasCuxdPort()) {
-            if (hasInterface(HmInterface.CUXD)) {
-                availableInterfaces.add(HmInterface.CUXD);
-            }
-        }
-        if (config.getGatewayInfo().isCCU() || config.hasHmIpPort()) {
-            if (hasInterface(HmInterface.HMIP)) {
-                availableInterfaces.add(HmInterface.HMIP);
-            }
-        }
-
-        // stop the interface lookup client
-        stopClient();
 
         logger.info("{}", config.getGatewayInfo());
-
-        startClient();
-        startServer();
-        startWatchdogs();
-    }
-
-    /**
-     * Returns true, if a connection is possible with the given interface.
-     */
-    private boolean hasInterface(HmInterface hmInterface) throws IOException {
-        try {
-            rpcClient.checkInterface(hmInterface);
-            return true;
-        } catch (IOException ex) {
-            logger.info("Interface '{}' on gateway '{}' not available, disabling support", hmInterface, id);
-            return false;
+        StringBuilder sb = new StringBuilder();
+        for (Entry<HmInterface, TransferMode> entry : availableInterfaces.entrySet()) {
+            sb.append(entry.getKey()).append(":").append(entry.getValue()).append(", ");
         }
+        if (sb.length() > 2) {
+            sb.setLength(sb.length() - 2);
+        }
+        logger.debug("Used Homematic transfer modes: {}", sb.toString());
+        startClients();
+        startServers();
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public void dispose() {
+        initialized = false;
         stopWatchdogs();
-        delayedExecutor.stop();
-        stopServer();
-        stopClient();
+        sendDelayedExecutor.stop();
+        receiveDelayedExecutor.stop();
+        stopServers();
+        stopClients();
         devices.clear();
         echoEvents.clear();
         availableInterfaces.clear();
         config.setGatewayInfo(null);
     }
 
-    private boolean isHomematicIpAvailable() {
-        return availableInterfaces.contains(HmInterface.HMIP);
-    }
-
     /**
      * Starts the Homematic gateway client.
      */
-    protected void startClient() throws IOException {
-        if (isHomematicIpAvailable()) {
-            rpcClient = new XmlRpcClient(config);
-        } else {
-            rpcClient = new BinRpcClient(config);
+    protected void startClients() throws IOException {
+        for (TransferMode mode : availableInterfaces.values()) {
+            if (!rpcClients.containsKey(mode)) {
+                rpcClients.put(mode,
+                        mode == TransferMode.XML_RPC ? new XmlRpcClient(config) : new BinRpcClient(config));
+            }
         }
     }
 
     /**
      * Stops the Homematic gateway client.
      */
-    protected void stopClient() {
-        rpcClient.dispose();
+    protected void stopClients() {
+        for (RpcClient<?> rpcClient : rpcClients.values()) {
+            rpcClient.dispose();
+        }
+        rpcClients.clear();
     }
 
     /**
      * Starts the Homematic RPC server.
      */
-    private void startServer() throws IOException {
-        if (isHomematicIpAvailable()) {
-            rpcServer = new XmlRpcServer(this, config);
-        } else {
-            rpcServer = new BinRpcServer(this, config);
+    private void startServers() throws IOException {
+        for (TransferMode mode : availableInterfaces.values()) {
+            if (!rpcServers.containsKey(mode)) {
+                RpcServer rpcServer = mode == TransferMode.XML_RPC ? new XmlRpcServer(this, config)
+                        : new BinRpcServer(this, config);
+                rpcServers.put(mode, rpcServer);
+                rpcServer.start();
+            }
         }
-        rpcServer.start();
-        for (HmInterface hmInterface : availableInterfaces) {
-            rpcClient.init(hmInterface, hmInterface.toString() + "-" + id);
+        for (HmInterface hmInterface : availableInterfaces.keySet()) {
+            getRpcClient(hmInterface).init(hmInterface, hmInterface.toString() + "-" + id);
         }
     }
 
     /**
      * Stops the Homematic RPC server.
      */
-    private void stopServer() {
-        for (HmInterface hmInterface : availableInterfaces) {
+    private void stopServers() {
+        for (HmInterface hmInterface : availableInterfaces.keySet()) {
             try {
-                rpcClient.release(hmInterface);
+                getRpcClient(hmInterface).release(hmInterface);
             } catch (IOException ex) {
-                logger.warn(ex.getMessage(), ex);
+                // recoverable exception, therefore only debug
+                logger.debug("Unable to release the connection to the gateway with id '{}': {}", id, ex.getMessage(),
+                        ex);
             }
         }
-        if (rpcServer != null) {
-            rpcServer.shutdown();
+
+        for (TransferMode mode : rpcServers.keySet()) {
+            rpcServers.get(mode).shutdown();
         }
+        rpcServers.clear();
     }
 
-    /**
-     * Starts the connection and event tracker threads.
-     */
-    private void startWatchdogs() {
+    @Override
+    public void startWatchdogs() {
         ScheduledExecutorService scheduler = ThreadPoolManager.getScheduledPool(GATEWAY_POOL_NAME);
 
-        if (config.getReconnectInterval() == 0) {
-            logger.debug("Starting event tracker for gateway with id '{}'", id);
-            eventTrackerThread = scheduler.scheduleWithFixedDelay(new EventTrackerThread(), 1, 1, TimeUnit.MINUTES);
-        } else {
-            // schedule fixed delay restart
-            logger.debug("Starting reconnect tracker for gateway with id '{}'", id);
-            reconnectThread = scheduler.scheduleWithFixedDelay(new ReconnectThread(), config.getReconnectInterval(),
-                    config.getReconnectInterval(), TimeUnit.SECONDS);
-        }
         logger.debug("Starting connection tracker for gateway with id '{}'", id);
-        connectionTrackerThread = scheduler.scheduleWithFixedDelay(new ConnectionTrackerThread(), 30,
+        connectionTrackerThread = new ConnectionTrackerThread();
+        connectionTrackerFuture = scheduler.scheduleWithFixedDelay(connectionTrackerThread, 30,
                 CONNECTION_TRACKER_INTERVAL_SECONDS, TimeUnit.SECONDS);
     }
 
     private void stopWatchdogs() {
-        if (eventTrackerThread != null) {
-            eventTrackerThread.cancel(true);
+        if (connectionTrackerFuture != null) {
+            connectionTrackerFuture.cancel(true);
         }
-        if (reconnectThread != null) {
-            reconnectThread.cancel(true);
-        }
-        if (connectionTrackerThread != null) {
-            connectionTrackerThread.cancel(true);
-        }
+        connectionTrackerThread = null;
     }
 
     /**
      * Returns the default interface to communicate with the Homematic gateway.
      */
     protected HmInterface getDefaultInterface() {
-        return availableInterfaces.get(0);
+        return HmInterface.RF;
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
-    public RpcClient getRpcClient() {
+    public RpcClient<?> getRpcClient(HmInterface hmInterface) throws IOException {
+        RpcClient<?> rpcClient = rpcClients.get(availableInterfaces.get(hmInterface));
+        if (rpcClient == null) {
+            throw new IOException("RPC client for interface " + hmInterface + " not available");
+        }
         return rpcClient;
     }
 
@@ -299,9 +306,6 @@ public abstract class AbstractHomematicGateway implements RpcEventListener, Home
      */
     protected abstract void executeScript(HmDatapoint dp) throws IOException;
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public HmDatapoint getDatapoint(HmDatapointInfo dpInfo) throws HomematicClientException {
         HmDevice device = getDevice(dpInfo.getAddress());
@@ -317,9 +321,6 @@ public abstract class AbstractHomematicGateway implements RpcEventListener, Home
         return dp;
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public HmDevice getDevice(String address) throws HomematicClientException {
         HmDevice device = devices.get(address);
@@ -330,17 +331,11 @@ public abstract class AbstractHomematicGateway implements RpcEventListener, Home
         return device;
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public void cancelLoadAllDeviceMetadata() {
         cancelLoadAllMetadata = true;
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public void loadAllDeviceMetadata() throws IOException {
         cancelLoadAllMetadata = false;
@@ -375,18 +370,22 @@ public abstract class AbstractHomematicGateway implements RpcEventListener, Home
                                     cloneAllDatapointsIntoChannel(channel, cachedDatapoints);
                                 } else {
                                     logger.trace("    Loading datapoints into channel {}", channel);
-                                    // load all datapoints from the gateway
-                                    rpcClient.addChannelDatapoints(channel, HmParamsetType.MASTER);
-                                    rpcClient.addChannelDatapoints(channel, HmParamsetType.VALUES);
+                                    addChannelDatapoints(channel, HmParamsetType.MASTER);
+                                    addChannelDatapoints(channel, HmParamsetType.VALUES);
 
-                                    datapointsByChannelIdCache.put(channelId, channel.getDatapoints().values());
+                                    // Make sure to only cache non-reconfigurable channels. For reconfigurable channels,
+                                    // the data point set might change depending on the selected mode.
+                                    if (channel.getDatapoint(HmParamsetType.MASTER,
+                                            DATAPOINT_NAME_CHANNEL_FUNCTION) == null) {
+                                        datapointsByChannelIdCache.put(channelId, channel.getDatapoints().values());
+                                    }
                                 }
                             }
                         }
                     }
                     prepareDevice(device);
                     loadedDevices.add(device.getAddress());
-                    eventListener.onDeviceLoaded(device);
+                    gatewayAdapter.onDeviceLoaded(device);
                 } catch (IOException ex) {
                     logger.warn("Can't load device with address '{}' from gateway '{}': {}", device.getAddress(), id,
                             ex.getMessage());
@@ -396,6 +395,20 @@ public abstract class AbstractHomematicGateway implements RpcEventListener, Home
         if (!cancelLoadAllMetadata) {
             devices.keySet().retainAll(loadedDevices);
         }
+        initialized = true;
+    }
+
+    /**
+     * Loads all datapoints from the gateway.
+     */
+    protected void addChannelDatapoints(HmChannel channel, HmParamsetType paramsetType) throws IOException {
+        try {
+            getRpcClient(channel.getDevice().getHmInterface()).addChannelDatapoints(channel, paramsetType);
+        } catch (UnknownParameterSetException ex) {
+            logger.info(
+                    "Can not load metadata for device: {}, channel: {}, paramset: {}, maybe there are no channels available",
+                    channel.getDevice().getAddress(), channel.getNumber(), paramsetType);
+        }
     }
 
     /**
@@ -403,8 +416,8 @@ public abstract class AbstractHomematicGateway implements RpcEventListener, Home
      */
     private List<HmDevice> getDeviceDescriptions() throws IOException {
         List<HmDevice> deviceDescriptions = new ArrayList<HmDevice>();
-        for (HmInterface hmInterface : availableInterfaces) {
-            deviceDescriptions.addAll(rpcClient.listDevices(hmInterface));
+        for (HmInterface hmInterface : availableInterfaces.keySet()) {
+            deviceDescriptions.addAll(getRpcClient(hmInterface).listDevices(hmInterface));
         }
         deviceDescriptions.add(createGatewayDevice());
         loadDeviceNames(deviceDescriptions);
@@ -425,15 +438,11 @@ public abstract class AbstractHomematicGateway implements RpcEventListener, Home
         }
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public void loadChannelValues(HmChannel channel) throws IOException {
         if (channel.getDevice().isGatewayExtras()) {
             if (channel.getNumber() != HmChannel.CHANNEL_NUMBER_EXTRAS) {
                 Map<HmDatapointInfo, HmDatapoint> datapoints = channel.getDatapoints();
-                datapoints.clear();
 
                 if (channel.getNumber() == HmChannel.CHANNEL_NUMBER_VARIABLE) {
                     loadVariables(channel);
@@ -445,36 +454,75 @@ public abstract class AbstractHomematicGateway implements RpcEventListener, Home
             }
         } else {
             logger.debug("Loading values for channel {} of device '{}'", channel, channel.getDevice().getAddress());
-            rpcClient.setChannelDatapointValues(channel, HmParamsetType.MASTER);
-            rpcClient.setChannelDatapointValues(channel, HmParamsetType.VALUES);
+            setChannelDatapointValues(channel, HmParamsetType.MASTER);
+            setChannelDatapointValues(channel, HmParamsetType.VALUES);
         }
+
+        for (HmDatapoint dp : channel.getDatapoints().values()) {
+            for (VirtualDatapointHandler vdph : virtualDatapointHandlers) {
+                if (vdph.canHandleEvent(dp)) {
+                    vdph.handleEvent(this, dp);
+                }
+            }
+        }
+
         channel.setInitialized(true);
     }
 
     /**
-     * {@inheritDoc}
+     * Sets all datapoint values for the given channel.
      */
+    protected void setChannelDatapointValues(HmChannel channel, HmParamsetType paramsetType) throws IOException {
+        try {
+            getRpcClient(channel.getDevice().getHmInterface()).setChannelDatapointValues(channel, paramsetType);
+        } catch (UnknownParameterSetException ex) {
+            logger.info(
+                    "Can not load values for device: {}, channel: {}, paramset: {}, maybe there are no values available",
+                    channel.getDevice().getAddress(), channel.getNumber(), paramsetType);
+        }
+    }
+
+    @Override
+    public void loadRssiValues() throws IOException {
+        for (HmInterface hmInterface : availableInterfaces.keySet()) {
+            if (hmInterface == HmInterface.RF || hmInterface == HmInterface.CUXD) {
+                List<HmRssiInfo> rssiInfos = getRpcClient(hmInterface).loadRssiInfo(hmInterface);
+                for (HmRssiInfo hmRssiInfo : rssiInfos) {
+                    updateRssiInfo(hmRssiInfo.getAddress(), DATAPOINT_NAME_RSSI_DEVICE, hmRssiInfo.getDevice());
+                    updateRssiInfo(hmRssiInfo.getAddress(), DATAPOINT_NAME_RSSI_PEER, hmRssiInfo.getPeer());
+                }
+            }
+        }
+    }
+
+    private void updateRssiInfo(String address, String datapointName, Integer value) {
+        HmDatapointInfo dpInfo = new HmDatapointInfo(address, HmParamsetType.VALUES, 0, datapointName);
+        HmChannel channel;
+        try {
+            channel = getDevice(dpInfo.getAddress()).getChannel(0);
+            if (channel != null) {
+                eventReceived(dpInfo, value);
+            }
+        } catch (HomematicClientException e) {
+            // ignore
+        }
+    }
+
     @Override
     public void triggerDeviceValuesReload(HmDevice device) {
         logger.debug("Triggering values reload for device '{}'", device.getAddress());
         for (HmChannel channel : device.getChannels()) {
             channel.setInitialized(false);
         }
-        eventListener.reloadDeviceValues(device);
+        gatewayAdapter.reloadDeviceValues(device);
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public void sendDatapointIgnoreVirtual(HmDatapoint dp, HmDatapointConfig dpConfig, Object newValue)
             throws IOException, HomematicClientException {
         sendDatapoint(dp, dpConfig, newValue, true);
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public void sendDatapoint(HmDatapoint dp, HmDatapointConfig dpConfig, Object newValue)
             throws IOException, HomematicClientException {
@@ -493,17 +541,13 @@ public abstract class AbstractHomematicGateway implements RpcEventListener, Home
         }
         if (dp.isReadOnly()) {
             logger.warn("Datapoint is readOnly, it is not published to the gateway with id '{}': '{}'", id, dpInfo);
-        } else if (!dp.isVirtual() && !dpConfig.isForceUpdate() && ObjectUtils.equals(dp.getValue(), newValue)) {
-            logger.debug(
-                    "Value '{}' equals cached gateway value '{}' with id '{}' and forceUpdate is false, ignoring '{}'",
-                    dp.getValue(), newValue, id, dpInfo);
         } else if (HmValueType.ACTION == dp.getType() && MiscUtils.isFalseValue(newValue)) {
             logger.warn(
                     "Datapoint of type ACTION cannot be set to false, it is not published to the gateway with id '{}': '{}'",
                     id, dpInfo);
         } else {
             final VirtualGateway gateway = this;
-            delayedExecutor.start(dpInfo, dpConfig.getDelay(), new DelayedExecuterCallback() {
+            sendDelayedExecutor.start(dpInfo, dpConfig.getDelay(), new DelayedExecuterCallback() {
 
                 @Override
                 public void execute() throws IOException, HomematicClientException {
@@ -511,7 +555,7 @@ public abstract class AbstractHomematicGateway implements RpcEventListener, Home
                             : getVirtualDatapointHandler(dp, newValue);
                     if (virtualDatapointHandler != null) {
                         logger.debug("Handling virtual datapoint '{}' on gateway with id '{}'", dp.getName(), id);
-                        virtualDatapointHandler.handle(gateway, dp, dpConfig, newValue);
+                        virtualDatapointHandler.handleCommand(gateway, dp, dpConfig, newValue);
                     } else if (dp.isScript()) {
                         if (MiscUtils.isTrueValue(newValue)) {
                             logger.debug("Executing script '{}' on gateway with id '{}'", dp.getInfo(), id);
@@ -524,7 +568,7 @@ public abstract class AbstractHomematicGateway implements RpcEventListener, Home
                     } else {
                         logger.debug("Sending datapoint '{}' with value '{}' to gateway with id '{}'", dpInfo, newValue,
                                 id);
-                        rpcClient.setDatapointValue(dp, newValue);
+                        getRpcClient(dp.getChannel().getDevice().getHmInterface()).setDatapointValue(dp, newValue);
                     }
                     dp.setValue(newValue);
 
@@ -542,94 +586,96 @@ public abstract class AbstractHomematicGateway implements RpcEventListener, Home
      */
     private VirtualDatapointHandler getVirtualDatapointHandler(HmDatapoint dp, Object value) {
         for (VirtualDatapointHandler vdph : virtualDatapointHandlers) {
-            if (vdph.canHandle(dp, value)) {
+            if (vdph.canHandleCommand(dp, value)) {
                 return vdph;
             }
         }
         return null;
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public void eventReceived(HmDatapointInfo dpInfo, Object newValue) {
         String className = newValue == null ? "Unknown" : newValue.getClass().getSimpleName();
         logger.debug("Received new ({}) value '{}' for '{}' from gateway with id '{}'", className, newValue, dpInfo,
                 id);
-        lastEventTime = System.currentTimeMillis();
 
         if (echoEvents.remove(dpInfo)) {
             logger.debug("Echo event detected, ignoring '{}'", dpInfo);
         } else {
             try {
-                HmDatapoint dp = getDatapoint(dpInfo);
-                dp.setValue(newValue);
-
-                eventListener.onStateUpdated(dp);
-                if (dp.isPressDatapoint() && MiscUtils.isTrueValue(dp.getValue())) {
-                    disableDatapoint(dp, DEFAULT_DISABLE_DELAY);
+                if (connectionTrackerThread != null && dpInfo.isPong() && id.equals(newValue)) {
+                    connectionTrackerThread.pongReceived();
                 }
-            } catch (HomematicClientException ex) {
-                // ignore datapoint not found
+                if (initialized) {
+                    final HmDatapoint dp = getDatapoint(dpInfo);
+                    HmDatapointConfig config = gatewayAdapter.getDatapointConfig(dp);
+                    receiveDelayedExecutor.start(dpInfo, config.getReceiveDelay(), () -> {
+                        dp.setValue(newValue);
+
+                        gatewayAdapter.onStateUpdated(dp);
+                        if (dp.isPressDatapoint() && MiscUtils.isTrueValue(dp.getValue())) {
+                            disableDatapoint(dp, DEFAULT_DISABLE_DELAY);
+                        }
+                        for (VirtualDatapointHandler vdph : virtualDatapointHandlers) {
+                            if (vdph.canHandleEvent(dp)) {
+                                vdph.handleEvent(this, dp);
+                                gatewayAdapter.onStateUpdated(vdph.getVirtualDatapoint(dp.getChannel()));
+                            }
+                        }
+
+                    });
+                }
+            } catch (HomematicClientException | IOException ex) {
+                // ignore
             }
         }
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public void newDevices(List<String> adresses) {
-        if (adresses.size() == 1) {
-            try {
-                String address = adresses.get(0);
-                logger.debug("New device '{}' detected on gateway with id '{}'", address, id);
-                List<HmDevice> deviceDescriptions = getDeviceDescriptions();
-                for (HmDevice device : deviceDescriptions) {
-                    if (device.getAddress().equals(address)) {
-                        for (HmChannel channel : device.getChannels()) {
-                            rpcClient.addChannelDatapoints(channel, HmParamsetType.MASTER);
-                            rpcClient.addChannelDatapoints(channel, HmParamsetType.VALUES);
+        if (initialized) {
+            for (String address : adresses) {
+                try {
+                    logger.debug("New device '{}' detected on gateway with id '{}'", address, id);
+                    List<HmDevice> deviceDescriptions = getDeviceDescriptions();
+                    for (HmDevice device : deviceDescriptions) {
+                        if (device.getAddress().equals(address)) {
+                            for (HmChannel channel : device.getChannels()) {
+                                addChannelDatapoints(channel, HmParamsetType.MASTER);
+                                addChannelDatapoints(channel, HmParamsetType.VALUES);
+                            }
+                            prepareDevice(device);
+                            gatewayAdapter.onNewDevice(device);
                         }
-                        prepareDevice(device);
-                        eventListener.onNewDevice(device);
                     }
+                } catch (Exception ex) {
+                    logger.error("{}", ex.getMessage(), ex);
                 }
-            } catch (Exception ex) {
-                logger.error(ex.getMessage(), ex);
             }
         }
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public void deleteDevices(List<String> addresses) {
-        for (String address : addresses) {
-            logger.debug("Device '{}' removed from gateway with id '{}'", address, id);
-            HmDevice device = devices.remove(address);
-            if (device != null) {
-                eventListener.onDeviceDeleted(device);
+        if (initialized) {
+            for (String address : addresses) {
+                logger.debug("Device '{}' removed from gateway with id '{}'", address, id);
+                HmDevice device = devices.remove(address);
+                if (device != null) {
+                    gatewayAdapter.onDeviceDeleted(device);
+                }
             }
         }
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public String getId() {
         return id;
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
-    public HomematicGatewayListener getEventListener() {
-        return eventListener;
+    public HomematicGatewayAdapter getGatewayAdapter() {
+        return gatewayAdapter;
     }
 
     /**
@@ -666,18 +712,8 @@ public abstract class AbstractHomematicGateway implements RpcEventListener, Home
      */
     private void prepareDevice(HmDevice device) {
         for (VirtualDatapointHandler vdph : virtualDatapointHandlers) {
-            vdph.add(device);
-        }
-        for (HmChannel channel : device.getChannels()) {
-            for (HmDatapoint dp : channel.getDatapoints().values()) {
-                if (dp.isVirtual()) {
-                    try {
-                        dp.setValue(getDatapoint(new HmDatapointInfo(dp)).getValue());
-                    } catch (HomematicClientException e) {
-                        // ignore
-                    }
-                }
-            }
+            vdph.initialize(device);
+
         }
         devices.put(device.getAddress(), device);
         logger.debug("Loaded device '{}' ({}) with {} datapoints", device.getAddress(), device.getType(),
@@ -694,54 +730,24 @@ public abstract class AbstractHomematicGateway implements RpcEventListener, Home
         }
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public void disableDatapoint(final HmDatapoint dp, double delay) {
         try {
-            delayedExecutor.start(new HmDatapointInfo(dp), delay, new DelayedExecuterCallback() {
+            sendDelayedExecutor.start(new HmDatapointInfo(dp), delay, new DelayedExecuterCallback() {
 
                 @Override
                 public void execute() throws IOException {
                     if (MiscUtils.isTrueValue(dp.getValue())) {
                         dp.setValue(Boolean.FALSE);
-                        eventListener.onStateUpdated(dp);
+                        gatewayAdapter.onStateUpdated(dp);
                     } else if (dp.getType() == HmValueType.ENUM && dp.getValue() != null && !dp.getValue().equals(0)) {
                         dp.setValue(dp.getMinValue());
-                        eventListener.onStateUpdated(dp);
+                        gatewayAdapter.onStateUpdated(dp);
                     }
                 }
             });
         } catch (IOException | HomematicClientException ex) {
-            logger.error(ex.getMessage(), ex);
-        }
-    }
-
-    /**
-     * Thread which validates the events from the gateway and restarts the RPC server if no event receives within a
-     * configurable time.
-     */
-    private class EventTrackerThread implements Runnable {
-
-        /**
-         * {@inheritDoc}
-         */
-        @Override
-        public void run() {
-            int timeSinceLastEvent = (int) ((System.currentTimeMillis() - lastEventTime) / 1000);
-            if (timeSinceLastEvent >= config.getAliveInterval()) {
-                logger.info("No event since {} seconds from gateway '{}', restarting RPC server", timeSinceLastEvent,
-                        id);
-                try {
-                    stopServer();
-                    startServer();
-                    eventListener.onServerRestart();
-                } catch (IOException ex) {
-                    logger.warn(ex.getMessage());
-                    logger.trace(ex.getMessage(), ex);
-                }
-            }
+            logger.error("{}", ex.getMessage(), ex);
         }
     }
 
@@ -749,50 +755,61 @@ public abstract class AbstractHomematicGateway implements RpcEventListener, Home
      * Thread which validates the connection to the gateway and restarts the RPC client if necessary.
      */
     private class ConnectionTrackerThread implements Runnable {
-        private boolean connectionLost = false;
+        private boolean connectionLost;
+        private boolean ping;
+        private boolean pong;
 
-        /**
-         * {@inheritDoc}
-         */
         @Override
         public void run() {
             try {
-                rpcClient.validateConnection(getDefaultInterface());
-                if (connectionLost) {
-                    connectionLost = false;
-                    logger.info("Connection resumed on gateway '{}'", id);
-                    startClient();
-                    eventListener.onConnectionResumed();
+                if (ping && !pong) {
+                    handleInvalidConnection();
                 }
+
+                pong = false;
+                if (config.getGatewayInfo().isCCU1()) {
+                    // the CCU1 does not support the ping command, we need a workaround
+                    getRpcClient(getDefaultInterface()).listBidcosInterfaces(getDefaultInterface());
+                    // if there is no exception, connection is valid
+                    connectionConfirmed();
+                } else {
+                    getRpcClient(getDefaultInterface()).ping(getDefaultInterface(), id);
+                }
+                ping = true;
             } catch (IOException ex) {
-                if (!connectionLost) {
-                    connectionLost = true;
-                    logger.warn("Connection lost on gateway '{}'", id);
-                    stopClient();
-                    eventListener.onConnectionLost();
+                try {
+                    handleInvalidConnection();
+                } catch (IOException ex2) {
+                    // ignore
                 }
-                // temporary disable EventTrackerThread
-                lastEventTime = System.currentTimeMillis();
             }
         }
-    }
 
-    /**
-     * Threads which restarts the RPC server.
-     */
-    private class ReconnectThread implements Runnable {
+        public void pongReceived() {
+            pong = true;
+            connectionConfirmed();
+        }
 
-        /**
-         * {@inheritDoc}
-         */
-        @Override
-        public void run() {
-            try {
-                stopServer();
-                startServer();
-            } catch (IOException ex) {
-                logger.debug(ex.getMessage(), ex);
+        private void connectionConfirmed() {
+            if (connectionLost) {
+                connectionLost = false;
+                logger.info("Connection resumed on gateway '{}'", id);
+                gatewayAdapter.onConnectionResumed();
             }
         }
+
+        private void handleInvalidConnection() throws IOException {
+            ping = false;
+            if (!connectionLost) {
+                connectionLost = true;
+                logger.warn("Connection lost on gateway '{}'", id);
+                gatewayAdapter.onConnectionLost();
+            }
+            stopServers();
+            stopClients();
+            startClients();
+            startServers();
+        }
+
     }
 }
